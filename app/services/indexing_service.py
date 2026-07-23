@@ -1,4 +1,4 @@
-from app.indexing.loader import RepositoryLoader
+from app.indexing.repository_loader import RepositoryLoader
 from app.indexing.splitter import TextSplitter
 
 

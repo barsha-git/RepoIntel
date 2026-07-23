@@ -3,6 +3,8 @@
 from loguru import logger
 
 from app.core.config import settings
+from app.models.repository import Repository
+from app.services.repository_service import RepositoryService
 
 # Remove the default Loguru handler
 logger.remove()
@@ -17,6 +19,7 @@ logger.add(
         "{message}"
     ),
 )
+logger.info("cloning repositories: {}/{}", repository.owner, repository.name)
 
 # Expose the configured logger
 _all_ = ["logger"]
