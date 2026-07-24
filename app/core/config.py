@@ -23,6 +23,10 @@ class Settings(BaseSettings):
 
     LOG_LEVEL: str
 
+    EMBEDDING_MODEL_NAME: str
+
+    EMBEDDING_MODEL_DEVICE: str
+
 
 model_config: SettingsConfigDict =SettingsConfigDict (env_file = ".env")
 

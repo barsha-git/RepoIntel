@@ -1,5 +1,5 @@
 from app.indexing.repository_loader import RepositoryLoader
-from app.indexing.splitter import TextSplitter
+from app.indexing.CodeChunker import TextSplitter
 
 
 class IndexingService:
