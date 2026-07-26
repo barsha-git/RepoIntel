@@ -27,6 +27,17 @@ class Settings(BaseSettings):
 
     EMBEDDING_MODEL_DEVICE: str
 
+    Redis_URL: str
+    HISTORY_TTL: int
+    HISTORY_KEY_PREFIX: str
+
+    LLM_MODEL_NAME: str
+    LLM_MODEL_TEMPERATURE: float
+    LLM_MODEL_MAX_TOKENS: int
+    LLM_PROVIDERS: list[str]
+    GROQ_API_KEY: str
+
+
 
 model_config: SettingsConfigDict =SettingsConfigDict (env_file = ".env")
 
