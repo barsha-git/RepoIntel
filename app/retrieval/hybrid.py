@@ -1,6 +1,6 @@
 """Hybrid retriever."""
 
-from langchain_core.retrievers import BaseRetriever, EnsembleRetriever
+from langchain_classic.retrievers import BaseRetriever, EnsembleRetriever
 
 
 class HybridRetriever:

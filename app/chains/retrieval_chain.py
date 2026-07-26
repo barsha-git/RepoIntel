@@ -1,6 +1,6 @@
 """Retrieval chain."""
 
-from langchain.chains import create_retrieval_chain
+from langchain_classic.chains import create_retrieval_chain
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.runnables import Runnable
 

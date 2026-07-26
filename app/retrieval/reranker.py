@@ -1,6 +1,6 @@
 """FlashRank reranker."""
 
-from langchain_core.retrievers import ContextualCompressionRetriever
+from langchain_classic.retrievers import ContextualCompressionRetriever
 from langchain_community.document_compressors import FlashrankRerank
 from langchain_core.retrievers import BaseRetriever
 
