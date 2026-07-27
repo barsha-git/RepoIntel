@@ -17,7 +17,7 @@ class RedisHistoryService:
     def __init__(self) -> None:
         """Initialize the history service."""
 
-        self.redis_url = settings.Redis_URL
+        self.redis_url = settings.REDIS_URL
         self.ttl = settings.HISTORY_TTL
         self.key_prefix = settings.HISTORY_KEY_PREFIX
 

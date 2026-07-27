@@ -83,10 +83,16 @@ class RepositoryService:
         )
 
         try:
+            logger.info(
+                "Clone_repository: Cloning repository: {}/{}",
+                repository.Owner,
+                repository.repo_name
+            )
             Repo.clone_from(
                 repository.url,
                 repository.local_path,
             )
+            logger.success("Clone_repository: Repository cloned successfully: {}/{}", repository.Owner, repository.repo_name)
         except GitCommandError as exc:
             raise RepositoryCloneError(
                 f"Failed to clone repository: {repository.url}"
@@ -148,12 +154,18 @@ class RepositoryService:
        """Return the local filesystem path of the repository."""
        return repository.local_path
 
-    def prepare_repository(self, url: str) -> Path: 
+    def prepare_repository(self, url: str) -> Repository: 
        repo = self.parse_github_url(url)
+
+       logger.info(
+        "Preparing repository: {}/{}",
+        repo.Owner,
+        repo.repo_name,
+    )
 
        if self.repository_exists(repo):
         self.update_repository(repo)
        else:
         self.clone_repository(repo)
 
-       return repo.local_path
+       return repo

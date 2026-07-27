@@ -6,7 +6,6 @@ from langchain_groq import ChatGroq
 from app.core.config import settings
 from app.core.logging import logger
 
-
 class ChatModelService:
     """Manage chat language models."""
 
@@ -38,9 +37,9 @@ class ChatModelService:
             case "groq":
 
                 model = ChatGroq(
-                    model=settings.LLM_MODEL_NAME,
-                    temperature=settings.LLM_MODEL_TEMPERATURE,
-                    max_tokens=settings.LLM_MODEL_MAX_TOKENS,
+                    model=settings.LLM_MODEL,
+                    temperature=settings.LLM_TEMPERATURE,
+                    max_tokens=settings.LLM_MAX_TOKENS,
                     api_key=settings.GROQ_API_KEY,
                 )
 
@@ -52,7 +51,7 @@ class ChatModelService:
 
         logger.success(
             "{} loaded successfully.",
-            settings.LLM_MODEL_NAME,
+            settings.LLM_MODEL,
         )
 
         return model
@@ -62,7 +61,7 @@ class ChatModelService:
         Return the configured model name.
         """
 
-        return settings.LLM_MODEL_NAME
+        return settings.LLM_MODEL
 
     def get_provider(self) -> str:
         """

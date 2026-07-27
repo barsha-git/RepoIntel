@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from app.api.routes import health
+from app.api.routes import health, repository
 from app.core.config import settings 
 
 def create_app() -> FastAPI:
@@ -12,6 +12,7 @@ def create_app() -> FastAPI:
 
     # Include API routes
     app.include_router(health.router, prefix="/api/v1", tags=["Health"])
+    app.include_router(repository.router, prefix="/api/v1", tags=["Repositories"])
 
     return app
 
