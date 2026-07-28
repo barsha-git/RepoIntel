@@ -4,9 +4,9 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.139.2-009688.svg)](https://fastapi.tiangolo.com/)
 [![Version](https://img.shields.io/badge/version-1.0.0-informational.svg)](app/core/config.py)
 
-**RepoIntel** is a repository intelligence service that ingests GitHub repositories, indexes their source code and documentation, and exposes retrieval-augmented generation (RAG) capabilities for code-aware question answering. The application is built as a modular FastAPI backend with a layered architecture separating API routes, orchestration services, indexing pipelines, and hybrid retrieval components.
+**RepoIntel** is a repository intelligence backend that ingests GitHub repositories, indexes their source code and documentation, and exposes retrieval-augmented generation (RAG) capabilities for code-aware question answering. The service is built as a modular FastAPI application with a layered architecture that separates HTTP routing, orchestration services, indexing pipelines, hybrid retrieval, and LangChain-based conversational chains.
 
-The project is under active development. Core indexing, retrieval, and repository-management modules are implemented; the HTTP API currently exposes a health endpoint, with additional routes planned to wire up the service layer.
+The project is under active development. Core modules for repository management, document indexing, hybrid retrieval (FAISS + BM25), LLM integration (Groq), and Redis-backed chat history are implemented. The HTTP API currently exposes health and repository endpoints; indexing and chat routes are implemented at the service and chain layers but not yet fully wired to REST handlers.
 
 Repository: [https://github.com/barsha-git/RepoIntel](https://github.com/barsha-git/RepoIntel)
 
@@ -14,27 +14,35 @@ Repository: [https://github.com/barsha-git/RepoIntel](https://github.com/barsha-
 
 ## Features
 
-- **GitHub repository lifecycle management** — Clone, update (pull), and delete GitHub repositories into local storage via `RepositoryService`, with URL validation, normalized paths, and structured error handling (`InvalidRepositoryURLError`, `RepositoryCloneError`, `RepositoryAlreadyExistsError`, and related exceptions).
+- **GitHub repository lifecycle management** — Clone, update (pull), and delete GitHub repositories into local storage via `RepositoryService`, with URL validation, normalized paths under `storage/repositories/{owner}/{repo}`, and a structured exception hierarchy (`InvalidRepositoryURLError`, `RepositoryCloneError`, `RepositoryAlreadyExistsError`, `RepositoryNotFoundError`, `RepositoryUpdateError`).
 
-- **Document ingestion** — Load repository files using LangChain `DirectoryLoader` and `TextLoader`, with configurable exclusion of build artifacts, virtual environments, and VCS metadata (`.git`, `node_modules`, `__pycache__`, etc.).
+- **REST repository ingestion** — `POST /api/v1/repositories/repositories:` accepts a GitHub URL, clones or updates the repository, and returns owner, repository name, URL, and local path metadata.
 
-- **Language-aware code chunking** — Split documents with `RecursiveCharacterTextSplitter` using Python and Markdown language profiles (1,000-character chunks, 200-character overlap) and a generic fallback for other file types.
+- **Document ingestion** — Load repository files with LangChain `DirectoryLoader` and `TextLoader`, excluding build artifacts, virtual environments, and VCS metadata (`.git`, `node_modules`, `__pycache__`, `dist`, `build`, and related paths).
 
-- **AST metadata enrichment** — Parse Python source files with the standard `ast` module to attach imports, class names, and function names to document metadata for richer retrieval context.
+- **Language-aware code chunking** — Split documents with `RecursiveCharacterTextSplitter` using Python and Markdown language profiles (1,000-character chunks, 200-character overlap) and a generic fallback for other file types via `CodeChunker`.
 
-- **Dual-index retrieval** — Persist and load both **FAISS** (dense vector) and **BM25** (sparse keyword) indexes per repository under `storage/indexes/`.
+- **AST metadata enrichment** — Parse Python source files with the standard library `ast` module to attach imports, class names, and function names to document metadata for richer retrieval context (`ASTEnricher`).
 
-- **Hybrid search** — Combine FAISS and BM25 retrievers via LangChain `EnsembleRetriever` with configurable weights (default: 60% FAISS, 40% BM25).
+- **Dual-index retrieval** — Persist and load both **FAISS** (dense vector) and **BM25** (sparse keyword) indexes per repository under `storage/indexes/faiss/` and `storage/indexes/bm25/`.
 
-- **Semantic embeddings** — Generate normalized embeddings with HuggingFace `BAAI/bge-small-en-v1.5` through `langchain-huggingface`.
+- **Hybrid search** — Combine FAISS and BM25 retrievers via LangChain `EnsembleRetriever` with configurable weights (default: 60% FAISS, 40% BM25) through `HybridRetriever`.
 
-- **Result reranking** — Optional FlashRank-based contextual compression reranking to refine top-k retrieval results.
+- **Semantic embeddings** — Generate L2-normalized embeddings with HuggingFace `BAAI/bge-small-en-v1.5` through `langchain-huggingface` (`EmbeddingService`).
 
-- **Q&A chain** — A lightweight `QAChain` that retrieves relevant document chunks and formats them as answers via `ChatService`.
+- **Result reranking** — Optional FlashRank-based contextual compression reranking via `FlashRankReranker` to refine top-k retrieval results.
 
-- **Redis integration** — Docker Compose provisioning for Redis 7, with stub implementations for caching (`RedisCache`) and conversation history (`RedisHistory`).
+- **Multi-stage RAG chains** — Composable LangChain runnables:
+  - `HistoryAwareRetriever` — Rewrites follow-up questions into standalone queries before retrieval.
+  - `QuestionAnswerChain` — Stuff-documents QA chain with repository-aware system prompts.
+  - `RetrievalChain` — Combines retriever and QA chain.
+  - `ConversationalChain` — Wraps retrieval with Redis-backed session history via `RunnableWithMessageHistory`.
 
-- **Structured configuration** — Environment-driven settings via `pydantic-settings`, including application metadata, API host/port, Redis connection, storage paths, and logging level.
+- **LLM integration** — Groq chat models via `langchain-groq` (`ChatModelService`), configured through environment variables.
+
+- **Redis integration** — Docker Compose provisioning for Redis 7; `RedisHistoryService` (LangChain `RedisChatMessageHistory`) for conversation persistence and a lightweight `RedisCache` wrapper.
+
+- **Structured configuration** — Environment-driven settings via `pydantic-settings`, covering application metadata, API host/port, Redis, storage paths, embedding settings, LLM provider configuration, and logging level.
 
 - **Observability** — Colored console logging through Loguru with configurable log levels.
 
@@ -47,24 +55,27 @@ Repository: [https://github.com/barsha-git/RepoIntel](https://github.com/barsha-
 | Language | Python | 3.11 |
 | Web framework | FastAPI | 0.139.2 |
 | ASGI server | Uvicorn | 0.51.0 |
+| HTTP toolkit | Starlette | 1.3.1 |
 | Validation / settings | Pydantic | 2.13.4 |
 | Settings loader | pydantic-settings | 2.14.2 |
 | Environment variables | python-dotenv | 1.2.2 |
 | Git operations | GitPython | 3.1.54 |
-| Caching / memory backend | Redis (client) | 8.0.1 |
-| Caching / memory server | Redis Alpine | 7 |
+| Redis client | redis (Python) | 8.0.1 |
+| Redis server | Redis Alpine | 7 |
 | Logging | Loguru | 0.7.3 |
-| LLM orchestration | LangChain Core | 1.5.0 |
-| Integrations | LangChain Community | 0.4.2 |
-| Text splitting | LangChain Text Splitters | 1.1.2 |
-| Embeddings | LangChain HuggingFace | 1.2.2 |
-| Vector search | FAISS (via LangChain Community) | — |
-| Keyword search | BM25 (via LangChain Community) | — |
-| Reranking | FlashRank (via LangChain Community) | — |
+| LLM orchestration | LangChain Core | — |
+| LangChain integrations | langchain-classic, langchain-community | — |
+| Text splitting | langchain-text-splitters | — |
+| Embeddings | langchain-huggingface | — |
+| LLM provider | langchain-groq | — |
+| Chat history | langchain-redis | — |
+| Vector search | FAISS (via langchain-community) | — |
+| Keyword search | BM25 (via langchain-community) | — |
+| Reranking | FlashRank (via langchain-community) | — |
 | Embedding model | `BAAI/bge-small-en-v1.5` | — |
 | Containerization | Docker, Docker Compose | — |
 
-> **Note:** `requirements.txt` lists core API and infrastructure dependencies. The indexing and retrieval modules additionally require LangChain packages and runtime libraries such as `faiss-cpu`, `rank-bm25`, `flashrank`, and `sentence-transformers`. Install these when using the full RAG pipeline (see [Installation](#installation)).
+> **Note:** `requirements.txt` pins core API and infrastructure dependencies only. Indexing, retrieval, and RAG chain modules additionally require LangChain packages and runtime libraries such as `faiss-cpu`, `rank-bm25`, `flashrank`, `sentence-transformers`, `langchain-groq`, and `langchain-redis`. Install these when using the full pipeline (see [Installation](#installation)).
 
 ---
 
@@ -74,7 +85,8 @@ Repository: [https://github.com/barsha-git/RepoIntel](https://github.com/barsha-
 
 - **Python 3.11+**
 - **Git** (for cloning GitHub repositories)
-- **Docker** and **Docker Compose** (optional, for Redis)
+- **Docker** and **Docker Compose** (recommended, for Redis)
+- **Groq API key** (required for LLM-backed chains; obtain at [console.groq.com](https://console.groq.com/))
 - Sufficient disk space under `STORAGE_PATH` for cloned repositories and on-disk indexes
 
 ### 1. Clone the repository
@@ -104,14 +116,17 @@ Install pinned core dependencies:
 pip install -r requirements.txt
 ```
 
-For indexing, embedding, and hybrid retrieval features, install the additional packages used by the codebase:
+For indexing, embedding, hybrid retrieval, and conversational chains, install the additional packages referenced by the codebase:
 
 ```bash
 pip install \
-  langchain-core==1.5.0 \
-  langchain-community==0.4.2 \
-  langchain-huggingface==1.2.2 \
-  langchain-text-splitters==1.1.2 \
+  langchain-core \
+  langchain-classic \
+  langchain-community \
+  langchain-huggingface \
+  langchain-text-splitters \
+  langchain-groq \
+  langchain-redis \
   faiss-cpu \
   rank-bm25 \
   flashrank \
@@ -120,38 +135,80 @@ pip install \
 
 ### 4. Configure environment variables
 
-Copy the example environment file and edit values as needed:
+Copy the example environment file and extend it with all required settings. The application settings model in `app/core/config.py` requires every variable listed below; missing values will prevent startup.
 
 ```bash
 cp .env.example .env
+```
+
+Minimal `.env` template (adjust values as needed):
+
+```env
+# Application
+APP_NAME=RepoIntel
+APP_ENV=development
+DEBUG=True
+
+# API
+HOST=0.0.0.0
+PORT=8000
+
+# Redis
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_DB=0
+REDIS_URL=redis://localhost:6379/0
+
+# Chat history
+HISTORY_TTL=86400
+HISTORY_KEY_PREFIX=repintel:chat:
+
+# Storage
+STORAGE_PATH=storage
+
+# Logging
+LOG_LEVEL=INFO
+
+# Embeddings
+EMBEDDING_MODEL_NAME=BAAI/bge-small-en-v1.5
+EMBEDDING_MODEL_DEVICE=cpu
+
+# LLM (Groq)
+LLM_PROVIDERS=groq
+LLM_MODEL=llama-3.3-70b-versatile
+LLM_TEMPERATURE=0.1
+LLM_MAX_TOKENS=4096
+GROQ_API_KEY=your_groq_api_key_here
 ```
 
 | Variable | Description | Example |
 |----------|-------------|---------|
 | `APP_NAME` | Application display name | `RepoIntel` |
 | `APP_ENV` | Runtime environment | `development` |
-| `DEBUG` | Enable debug mode | `True` |
+| `DEBUG` | Enable FastAPI debug mode | `True` |
 | `HOST` | API bind host | `0.0.0.0` |
 | `PORT` | API bind port | `8000` |
 | `REDIS_HOST` | Redis hostname | `localhost` |
 | `REDIS_PORT` | Redis port | `6379` |
 | `REDIS_DB` | Redis database index | `0` |
+| `REDIS_URL` | Redis connection URL for LangChain history | `redis://localhost:6379/0` |
+| `HISTORY_TTL` | Chat history TTL in seconds | `86400` |
+| `HISTORY_KEY_PREFIX` | Redis key prefix for sessions | `repintel:chat:` |
 | `STORAGE_PATH` | Root path for repositories and indexes | `storage` |
 | `LOG_LEVEL` | Loguru log level | `INFO` |
+| `EMBEDDING_MODEL_NAME` | HuggingFace embedding model identifier | `BAAI/bge-small-en-v1.5` |
+| `EMBEDDING_MODEL_DEVICE` | Compute device for embeddings | `cpu` |
+| `LLM_PROVIDERS` | LLM provider identifier | `groq` |
+| `LLM_MODEL` | Model name for the configured provider | `llama-3.3-70b-versatile` |
+| `LLM_TEMPERATURE` | Sampling temperature | `0.1` |
+| `LLM_MAX_TOKENS` | Maximum tokens in LLM responses | `4096` |
+| `GROQ_API_KEY` | Groq API authentication key | — |
 
-Optional settings defined in `app/core/config.py` (not present in `.env.example` by default):
+> **Note:** `EmbeddingService` currently hardcodes `BAAI/bge-small-en-v1.5` on CPU. The `EMBEDDING_MODEL_*` settings are defined for future use. The bundled `.env.example` contains a subset of these variables and uses a legacy `APP_NAME` value (`CodeCompass`); update it to match the template above.
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `APP_VERSION` | Semantic version string | `1.0.0` |
-| `EMBEDDING_MODEL_NAME` | HuggingFace embedding model identifier | — |
-| `EMBEDDING_MODEL_DEVICE` | Compute device for embeddings (`cpu`, `cuda`) | — |
+### 5. Start Redis
 
-> **Note:** `EmbeddingService` currently hardcodes `BAAI/bge-small-en-v1.5` on CPU. Environment variables for embedding configuration are reserved for future use.
-
-### 5. Start Redis (optional)
-
-Redis is used by cache and history modules. Start it with Docker Compose:
+Redis is required for conversational history and optional caching:
 
 ```bash
 docker compose up -d redis
@@ -211,6 +268,28 @@ curl http://localhost:8000/api/v1/health/
 }
 ```
 
+**Register a GitHub repository:**
+
+```bash
+curl -X POST http://localhost:8000/api/v1/repositories/repositories: \
+  -H "Content-Type: application/json" \
+  -d '{"github_url": "https://github.com/langchain-ai/langchain.git"}'
+```
+
+**Expected response:**
+
+```json
+{
+  "message": "Repository created successfully.",
+  "repository": {
+    "Owner": "langchain-ai",
+    "repo_name": "langchain",
+    "url": "https://github.com/langchain-ai/langchain.git",
+    "local_path": "storage/repositories/langchain-ai/langchain"
+  }
+}
+```
+
 ### Interactive API documentation
 
 FastAPI generates OpenAPI documentation automatically:
@@ -221,9 +300,9 @@ FastAPI generates OpenAPI documentation automatically:
 | [http://localhost:8000/redoc](http://localhost:8000/redoc) | ReDoc |
 | [http://localhost:8000/openapi.json](http://localhost:8000/openapi.json) | OpenAPI schema |
 
-### Programmatic usage (service layer)
+### Programmatic usage (service and chain layers)
 
-The following examples illustrate how internal modules are intended to be used. They are not yet exposed as HTTP endpoints.
+The following examples illustrate how internal modules are composed. Indexing and chat workflows are not yet exposed as dedicated REST endpoints.
 
 **Clone or update a GitHub repository:**
 
@@ -231,20 +310,24 @@ The following examples illustrate how internal modules are intended to be used. 
 from app.services.repository_service import RepositoryService
 
 service = RepositoryService()
-local_path = service.prepare_repository("https://github.com/langchain-ai/langchain.git")
-print(local_path)  # storage/repositories/langchain-ai/langchain
+repo = service.prepare_repository("https://github.com/langchain-ai/langchain.git")
+print(repo.local_path)  # storage/repositories/langchain-ai/langchain
 ```
 
-**Load and chunk repository documents:**
+**Load, enrich, and chunk repository documents:**
 
 ```python
 from app.indexing.repository_loader import RepositoryLoader
 from app.indexing.CodeChunker import CodeChunker
-from app.services.repository_service import RepositoryService
+from app.indexing.ast_enricher import ASTEnricher
 
-repo = RepositoryService().parse_github_url("https://github.com/owner/repo.git")
-documents = RepositoryLoader().load(repo)
-chunks = CodeChunker().chunk(documents)
+loader = RepositoryLoader()
+chunker = CodeChunker()
+enricher = ASTEnricher()
+
+documents = loader.load(repo)
+enriched = enricher.enrich(documents)
+chunks = chunker.chunk(enriched)
 ```
 
 **Build and persist FAISS and BM25 indexes:**
@@ -265,23 +348,47 @@ bm25_retriever = bm25_store.create(chunks)
 bm25_store.save(bm25_retriever, repo)
 ```
 
-**Ask a question via the Q&A chain:**
+**Compose hybrid retrieval and conversational RAG chain:**
 
 ```python
-from app.chains.qa_chain import QAChain
-from app.services.chat_service import ChatService
-from app.retrieval.retriever import Retriever
-from app.indexing.vectorstore import VectorStore
+from app.models.llm import ChatModelService
+from app.retrieval.hybrid import HybridRetriever
+from app.chains.history_aware_retriever import HistoryAwareRetriever
+from app.chains.qa_chain import QuestionAnswerChain
+from app.chains.retrieval_chain import RetrievalChain
+from app.chains.conversational_chain import ConversationalChain
+from app.memory.redis_history import RedisHistoryService
 
-chain = QAChain(Retriever(VectorStore()))
-chat = ChatService(chain)
-answer = chat.ask("How is hybrid retrieval configured?")
-print(answer)
+llm = ChatModelService().model
+
+faiss = faiss_store.load(repo)
+bm25 = bm25_store.load(repo)
+
+hybrid = HybridRetriever().create(
+    faiss_store.as_retriever(faiss, k=5),
+    bm25_store.as_retriever(bm25),
+)
+
+history_aware = HistoryAwareRetriever(llm).create(hybrid)
+qa_chain = QuestionAnswerChain(llm).create()
+retrieval_chain = RetrievalChain(history_aware, qa_chain).create()
+
+conversational = ConversationalChain(
+    retrieval_chain,
+    RedisHistoryService(),
+).create()
+
+# Invoke with a session ID for history persistence
+response = conversational.invoke(
+    {"input": "How is hybrid retrieval configured?"},
+    config={"configurable": {"session_id": "user-123"}},
+)
+print(response["answer"])
 ```
 
 ### Docker
 
-A `Dockerfile` is provided targeting Python 3.11. **Note:** the Dockerfile references `pyproject.toml`, which is not present in the repository; use `requirements.txt`-based installation for local development until the Docker build is aligned with the project layout.
+A `Dockerfile` targeting Python 3.11 is provided. **Note:** the Dockerfile references `pyproject.toml`, which is not present in the repository. Use `requirements.txt`-based installation for local development until the container build is aligned with the project layout.
 
 ```bash
 docker compose up -d redis
@@ -296,55 +403,62 @@ docker compose up -d redis
 RepoIntel/
 ├── app/
 │   ├── __init__.py
-│   ├── main.py                     # FastAPI application factory and entry point
+│   ├── main.py                         # FastAPI application factory and entry point
 │   ├── api/
-│   │   ├── dependencies.py         # Shared FastAPI dependencies
+│   │   ├── dependencies.py             # FastAPI dependency providers
 │   │   └── routes/
-│   │       └── health.py           # Health check endpoint
+│   │       ├── health.py               # Health check endpoint
+│   │       └── repository.py           # Repository clone/update endpoint
 │   ├── cache/
-│   │   └── redis_cache.py          # Redis-backed cache wrapper
+│   │   └── redis_cache.py              # Redis-backed cache wrapper
 │   ├── chains/
-│   │   └── qa_chain.py             # Retrieval-based Q&A chain
+│   │   ├── conversational_chain.py     # RunnableWithMessageHistory wrapper
+│   │   ├── history_aware_retriever.py    # Follow-up question contextualization
+│   │   ├── qa_chain.py                 # Stuff-documents QA chain builder
+│   │   └── retrieval_chain.py          # Retriever + QA chain composition
 │   ├── core/
-│   │   ├── config.py               # Pydantic settings (environment-driven)
-│   │   ├── constants.py            # Storage path constants
-│   │   ├── exception.py            # Domain-specific exception hierarchy
-│   │   └── logging.py              # Loguru configuration
+│   │   ├── config.py                   # Pydantic settings (environment-driven)
+│   │   ├── constants.py                # Storage path constants
+│   │   ├── exception.py                # Domain-specific exception hierarchy
+│   │   └── logging.py                  # Loguru configuration
 │   ├── indexing/
-│   │   ├── ast_enricher.py         # Python AST metadata extraction
-│   │   ├── CodeChunker.py          # Language-aware document chunking
-│   │   ├── metadata.py             # Document metadata dataclass
-│   │   ├── repository_loader.py    # LangChain-based file loader
-│   │   └── vectorstore.py          # In-memory vector store (development stub)
+│   │   ├── ast_enricher.py             # Python AST metadata extraction
+│   │   ├── CodeChunker.py              # Language-aware document chunking
+│   │   ├── metadata.py                 # Document metadata dataclass
+│   │   ├── repository_loader.py        # LangChain-based file loader
+│   │   └── vectorstore.py              # In-memory vector store (development stub)
 │   ├── memory/
-│   │   └── redis_history.py        # Redis-backed chat history wrapper
+│   │   └── redis_history.py            # Redis-backed chat history service
 │   ├── models/
-│   │   ├── embeddings.py           # Embeddings model placeholder
-│   │   ├── llm.py                  # LLM model placeholder
-│   │   └── repository.py           # Repository dataclass
+│   │   ├── llm.py                      # Groq chat model service
+│   │   └── repository.py               # Repository dataclass
+│   ├── prompts/
+│   │   ├── contextualize_prompt.py     # History-aware retrieval prompt
+│   │   ├── qa_prompt.py                # Question-answering prompt template
+│   │   └── SystemPrompt.py             # RepoIntel system prompt
 │   ├── retrieval/
-│   │   ├── bm25_store.py           # BM25 index persistence and retrieval
-│   │   ├── Embedding_Service.py    # HuggingFace embedding service
-│   │   ├── Faiss_store.py          # FAISS index persistence and retrieval
-│   │   ├── history.py              # In-memory chat history (deque)
-│   │   ├── hybrid.py               # FAISS + BM25 ensemble retriever
-│   │   ├── reranker.py             # FlashRank contextual compression
-│   │   └── retriever.py            # Retriever adapter
+│   │   ├── bm25_store.py               # BM25 index persistence and retrieval
+│   │   ├── Embedding_Service.py        # HuggingFace embedding service
+│   │   ├── Faiss_store.py              # FAISS index persistence and retrieval
+│   │   ├── hybrid.py                   # FAISS + BM25 ensemble retriever
+│   │   └── reranker.py                 # FlashRank contextual compression
+│   ├── schemas/
+│   │   └── repository.py               # Pydantic request/response models
 │   └── services/
-│       ├── chat_service.py         # Chat orchestration
-│       ├── indexing_service.py     # Indexing orchestration
-│       └── repository_service.py   # GitHub clone/update/delete operations
-├── storage/                        # Runtime data (gitignored)
-│   ├── repositories/               # Cloned Git repositories
+│       ├── chat_service.py             # Thin chain invocation wrapper
+│       ├── indexing_service.py         # Indexing orchestration (stub)
+│       └── repository_service.py       # GitHub clone/update/delete operations
+├── storage/                            # Runtime data (gitignored)
+│   ├── repositories/                   # Cloned Git repositories
 │   ├── indexes/
-│   │   ├── faiss/                  # FAISS index files per owner/repo
-│   │   └── bm25/                   # Serialized BM25 retrievers
-│   └── cache/                      # Application cache data
-├── .env.example                    # Environment variable template
+│   │   ├── faiss/                      # FAISS index files per owner/repo
+│   │   └── bm25/                       # Serialized BM25 retrievers
+│   └── cache/                          # Application cache data
+├── .env.example                        # Partial environment variable template
 ├── .gitignore
-├── docker-compose.yml              # Redis service definition
-├── Dockerfile                      # Container image definition
-├── requirements.txt                # Pinned Python dependencies
+├── docker-compose.yml                  # Redis service definition
+├── Dockerfile                          # Container image definition
+├── requirements.txt                    # Pinned core Python dependencies
 └── README.md
 ```
 
@@ -353,12 +467,14 @@ RepoIntel/
 | Layer | Path | Purpose |
 |-------|------|---------|
 | API | `app/api/` | HTTP routing, request/response handling, dependency injection |
+| Schemas | `app/schemas/` | Pydantic models for API contracts |
 | Core | `app/core/` | Configuration, logging, shared constants, exceptions |
 | Services | `app/services/` | Business logic orchestration across indexing, retrieval, and chat |
-| Indexing | `app/indexing/` | Repository loading, chunking, AST enrichment, vector storage |
+| Indexing | `app/indexing/` | Repository loading, chunking, AST enrichment |
 | Retrieval | `app/retrieval/` | Embeddings, FAISS/BM25 stores, hybrid search, reranking |
-| Chains | `app/chains/` | RAG pipeline composition |
-| Models | `app/models/` | Domain data structures |
+| Chains | `app/chains/` | LangChain RAG pipeline composition |
+| Prompts | `app/prompts/` | System and task-specific prompt templates |
+| Models | `app/models/` | Domain data structures and LLM service |
 | Cache / Memory | `app/cache/`, `app/memory/` | Redis-backed persistence helpers |
 
 ---
@@ -404,9 +520,59 @@ Host: localhost:8000
 | `version` | `string` | Application version from settings |
 | `environment` | `string` | Value of `APP_ENV` |
 
+#### `POST /repositories/repositories:`
+
+Clone a GitHub repository or pull the latest changes if it already exists locally.
+
+**Request:**
+
+```http
+POST /api/v1/repositories/repositories: HTTP/1.1
+Host: localhost:8000
+Content-Type: application/json
+
+{
+  "github_url": "https://github.com/owner/repo.git"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `github_url` | `string` (URL) | Yes | Valid GitHub repository URL |
+
+**Response `200 OK`:**
+
+```json
+{
+  "message": "Repository created successfully.",
+  "repository": {
+    "Owner": "owner",
+    "repo_name": "repo",
+    "url": "https://github.com/owner/repo.git",
+    "local_path": "storage/repositories/owner/repo"
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `message` | `string` | Operation status message |
+| `repository.Owner` | `string` | GitHub organization or user |
+| `repository.repo_name` | `string` | Repository name |
+| `repository.url` | `string` | Original GitHub URL |
+| `repository.local_path` | `string` | Local filesystem path |
+
+**Error responses (domain exceptions, not yet mapped to HTTP status codes uniformly):**
+
+| Condition | Exception |
+|-----------|-----------|
+| Non-GitHub or malformed URL | `InvalidRepositoryURLError` |
+| Clone failure | `RepositoryCloneError` |
+| Repository already exists on clone | `RepositoryAlreadyExistsError` |
+
 ### Planned endpoints
 
-The service layer supports repository management, indexing, and chat workflows, but corresponding REST routes (for example, `POST /repositories`, `POST /index`, `POST /chat`) are not yet registered in `app/main.py`. Consult the OpenAPI schema at `/docs` for the current route list.
+The service and chain layers support indexing and conversational Q&A workflows, but corresponding REST routes (for example, `POST /index`, `POST /chat`, `GET /repositories/{owner}/{repo}/status`) are not yet registered in `app/main.py`. Consult the OpenAPI schema at `/docs` for the current route list.
 
 ---
 
@@ -420,7 +586,7 @@ The repository does not currently include automated tests. The `.gitignore` is c
 pip install pytest pytest-asyncio httpx
 ```
 
-### Example test structure
+### Suggested test structure
 
 ```
 tests/
@@ -433,7 +599,8 @@ tests/
 │   ├── test_faiss_store.py
 │   └── test_bm25_store.py
 └── e2e/
-    └── test_health_endpoint.py
+    ├── test_health_endpoint.py
+    └── test_repository_endpoint.py
 ```
 
 ### Running tests (once added)
@@ -445,14 +612,14 @@ pytest
 # With coverage
 pytest --cov=app --cov-report=term-missing
 
-# End-to-end health check example
+# End-to-end health check
 pytest tests/e2e/test_health_endpoint.py -v
 ```
 
 ### Manual smoke test
 
 ```bash
-uvicorn app.main:app --port 8000 &
+uvicorn app.main:app --port 8000
 curl -s http://localhost:8000/api/v1/health/ | python -m json.tool
 ```
 
@@ -462,12 +629,12 @@ curl -s http://localhost:8000/api/v1/health/ | python -m json.tool
 
 Contributions are welcome. Please follow these guidelines:
 
-1. **Fork and branch** — Create a feature branch from `main` (for example, `feat/hybrid-retrieval-api`).
+1. **Fork and branch** — Create a feature branch from `main` (for example, `feat/chat-api`).
 
 2. **Match existing conventions**
    - Use type hints and docstrings on public methods.
-   - Place API routes under `app/api/routes/`.
-   - Keep orchestration logic in `app/services/`.
+   - Place API routes under `app/api/routes/` and Pydantic models under `app/schemas/`.
+   - Keep orchestration logic in `app/services/` and LangChain composition in `app/chains/`.
    - Use domain exceptions from `app/core/exception.py` for repository errors.
 
 3. **Environment and secrets** — Never commit `.env` files or credentials. Update `.env.example` when adding new configuration keys.
@@ -485,14 +652,15 @@ Contributions are welcome. Please follow these guidelines:
 
 ## License
 
-No license file is included in this repository, and no license is declared on the GitHub project metadata. All rights are reserved by default until a `LICENSE` file is added. Contact the repository owner before using this code in production or redistributing it.
+No license file is included in this repository. All rights are reserved by default until a `LICENSE` file is added. Contact the repository owner before using this code in production or redistributing it.
 
 ---
 
 ## Acknowledgments
 
 - **[FastAPI](https://fastapi.tiangolo.com/)** — High-performance async web framework and automatic OpenAPI generation.
-- **[LangChain](https://python.langchain.com/)** — Document loading, text splitting, vector stores, and retriever abstractions.
+- **[LangChain](https://python.langchain.com/)** — Document loading, text splitting, vector stores, retriever abstractions, and chain composition.
+- **[Groq](https://groq.com/)** — Low-latency LLM inference for conversational Q&A.
 - **[FAISS](https://github.com/facebookresearch/faiss)** — Efficient similarity search for dense vector retrieval.
 - **[BM25](https://en.wikipedia.org/wiki/Okapi_BM25)** — Probabilistic keyword ranking via LangChain Community retrievers.
 - **[FlashRank](https://github.com/PrithivirajDamodaran/FlashRank)** — Lightweight reranking for retrieval pipelines.
