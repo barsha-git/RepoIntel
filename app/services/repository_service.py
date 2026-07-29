@@ -1,6 +1,7 @@
 from pathlib import Path
 import shutil
 from urllib.parse import urlparse
+from app.models import repository
 from app.models.repository import Repository
 from app.core.exception import InvalidRepositoryURLError, RepositoryCloneError, RepositoryAlreadyExistsError, RepositoryNotFoundError, RepositoryUpdateError    
 from app.core.config import settings
@@ -153,6 +154,28 @@ class RepositoryService:
     def get_local_path(self, repository: Repository) -> Path:
        """Return the local filesystem path of the repository."""
        return repository.local_path
+
+    def get_repository(self,owner: str,name: str,) -> Repository:
+     local_path = (
+        Path(settings.STORAGE_PATH)
+        / "repositories"
+        / owner
+        / name
+     )
+
+     repo = Repository(
+        Owner=owner,
+        repo_name=name,
+        url=f"https://github.com/{owner}/{name}.git",
+        local_path=local_path,
+     )
+
+     if not self.repository_exists(repo):
+        raise RepositoryNotFoundError(
+            f"Repository '{repo.Owner}/{repo.repo_name}' does not exist."
+        )
+
+     return repo
 
     def prepare_repository(self, url: str) -> Repository: 
        repo = self.parse_github_url(url)

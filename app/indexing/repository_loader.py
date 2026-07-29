@@ -22,10 +22,10 @@ class RepositoryLoader:
 
         loader = DirectoryLoader(
             path=str(repository.local_path),
-            glob="*/",
+            glob="**/*",
             loader_cls=TextLoader,
             recursive=True,
-            silent_errors=True,
+            silent_errors=False,
             exclude=DEFAULT_EXCLUDE,
         )
 
