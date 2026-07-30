@@ -3,10 +3,11 @@
 [![Python](https://img.shields.io/badge/Python-3.11-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.139.2-009688.svg)](https://fastapi.tiangolo.com/)
 [![Version](https://img.shields.io/badge/version-1.0.0-informational.svg)](app/core/config.py)
+[![License](https://img.shields.io/badge/license-unlicensed-lightgrey.svg)](#license)
 
 **RepoIntel** is a repository intelligence backend that ingests GitHub repositories, indexes their source code and documentation, and exposes retrieval-augmented generation (RAG) capabilities for code-aware question answering. The service is built as a modular FastAPI application with a layered architecture that separates HTTP routing, orchestration services, indexing pipelines, hybrid retrieval, and LangChain-based conversational chains.
 
-The project is under active development. Core modules for repository management, document indexing, hybrid retrieval (FAISS + BM25), LLM integration (Groq), and Redis-backed chat history are implemented. The HTTP API currently exposes health and repository endpoints; indexing and chat routes are implemented at the service and chain layers but not yet fully wired to REST handlers.
+The HTTP API currently exposes health checks, full repository lifecycle management (create, read, update, delete), and a repository indexing endpoint. Indexing, hybrid retrieval (FAISS + BM25), LLM integration (Groq), and Redis-backed chat history are implemented at the service and chain layers; conversational Q&A is composable programmatically but not yet exposed as a REST endpoint.
 
 Repository: [https://github.com/barsha-git/RepoIntel](https://github.com/barsha-git/RepoIntel)
 
@@ -14,9 +15,15 @@ Repository: [https://github.com/barsha-git/RepoIntel](https://github.com/barsha-
 
 ## Features
 
-- **GitHub repository lifecycle management** — Clone, update (pull), and delete GitHub repositories into local storage via `RepositoryService`, with URL validation, normalized paths under `storage/repositories/{owner}/{repo}`, and a structured exception hierarchy (`InvalidRepositoryURLError`, `RepositoryCloneError`, `RepositoryAlreadyExistsError`, `RepositoryNotFoundError`, `RepositoryUpdateError`).
+- **GitHub repository lifecycle management** — Clone, update (pull), retrieve, and delete GitHub repositories via `RepositoryService`, with URL validation, normalized paths under `storage/repositories/{owner}/{repo}`, and a structured exception hierarchy (`InvalidRepositoryURLError`, `RepositoryCloneError`, `RepositoryAlreadyExistsError`, `RepositoryNotFoundError`, `RepositoryUpdateError`).
 
-- **REST repository ingestion** — `POST /api/v1/repositories/repositories:` accepts a GitHub URL, clones or updates the repository, and returns owner, repository name, URL, and local path metadata.
+- **REST repository ingestion and management**
+  - `POST /api/v1/repositories/repositories:` — Clone a repository or pull latest changes if it already exists locally.
+  - `GET /api/v1/repositories/{owner}/{name}` — Retrieve metadata for a locally stored repository.
+  - `PATCH /api/v1/repositories/{owner}/{name}` — Pull the latest changes from the remote.
+  - `DELETE /api/v1/repositories/{owner}/{name}` — Remove a repository from local storage.
+
+- **REST repository indexing** — `POST /api/v1/indexing/{owner}/{name}/index` orchestrates the full indexing pipeline: load documents, enrich with AST metadata, chunk, build a FAISS vector store, and persist it to disk.
 
 - **Document ingestion** — Load repository files with LangChain `DirectoryLoader` and `TextLoader`, excluding build artifacts, virtual environments, and VCS metadata (`.git`, `node_modules`, `__pycache__`, `dist`, `build`, and related paths).
 
@@ -141,7 +148,7 @@ Copy the example environment file and extend it with all required settings. The 
 cp .env.example .env
 ```
 
-Minimal `.env` template (adjust values as needed):
+Complete `.env` template (adjust values as needed):
 
 ```env
 # Application
@@ -204,7 +211,7 @@ GROQ_API_KEY=your_groq_api_key_here
 | `LLM_MAX_TOKENS` | Maximum tokens in LLM responses | `4096` |
 | `GROQ_API_KEY` | Groq API authentication key | — |
 
-> **Note:** `EmbeddingService` currently hardcodes `BAAI/bge-small-en-v1.5` on CPU. The `EMBEDDING_MODEL_*` settings are defined for future use. The bundled `.env.example` contains a subset of these variables and uses a legacy `APP_NAME` value (`CodeCompass`); update it to match the template above.
+> **Note:** `EmbeddingService` currently hardcodes `BAAI/bge-small-en-v1.5` on CPU. The `EMBEDDING_MODEL_*` settings are defined for future use. The bundled `.env.example` contains only a subset of these variables and uses a legacy `APP_NAME` value (`CodeCompass`); extend it using the template above.
 
 ### 5. Start Redis
 
@@ -290,6 +297,42 @@ curl -X POST http://localhost:8000/api/v1/repositories/repositories: \
 }
 ```
 
+**Index a repository:**
+
+```bash
+curl -X POST http://localhost:8000/api/v1/indexing/langchain-ai/langchain/index
+```
+
+**Expected response:**
+
+```json
+{
+  "message": "Repository indexed successfully.",
+  "repository": "langchain",
+  "indexed_documents": 1234,
+  "chunks": 1234,
+  "status": "success"
+}
+```
+
+**Retrieve repository metadata:**
+
+```bash
+curl http://localhost:8000/api/v1/repositories/langchain-ai/langchain
+```
+
+**Update a repository (pull latest):**
+
+```bash
+curl -X PATCH http://localhost:8000/api/v1/repositories/langchain-ai/langchain
+```
+
+**Delete a repository:**
+
+```bash
+curl -X DELETE http://localhost:8000/api/v1/repositories/langchain-ai/langchain
+```
+
 ### Interactive API documentation
 
 FastAPI generates OpenAPI documentation automatically:
@@ -300,66 +343,31 @@ FastAPI generates OpenAPI documentation automatically:
 | [http://localhost:8000/redoc](http://localhost:8000/redoc) | ReDoc |
 | [http://localhost:8000/openapi.json](http://localhost:8000/openapi.json) | OpenAPI schema |
 
-### Programmatic usage (service and chain layers)
+### Programmatic usage (chain layer)
 
-The following examples illustrate how internal modules are composed. Indexing and chat workflows are not yet exposed as dedicated REST endpoints.
-
-**Clone or update a GitHub repository:**
-
-```python
-from app.services.repository_service import RepositoryService
-
-service = RepositoryService()
-repo = service.prepare_repository("https://github.com/langchain-ai/langchain.git")
-print(repo.local_path)  # storage/repositories/langchain-ai/langchain
-```
-
-**Load, enrich, and chunk repository documents:**
-
-```python
-from app.indexing.repository_loader import RepositoryLoader
-from app.indexing.CodeChunker import CodeChunker
-from app.indexing.ast_enricher import ASTEnricher
-
-loader = RepositoryLoader()
-chunker = CodeChunker()
-enricher = ASTEnricher()
-
-documents = loader.load(repo)
-enriched = enricher.enrich(documents)
-chunks = chunker.chunk(enriched)
-```
-
-**Build and persist FAISS and BM25 indexes:**
-
-```python
-from app.retrieval.Embedding_Service import EmbeddingService
-from app.retrieval.Faiss_store import FAISSStore
-from app.retrieval.bm25_store import BM25Store
-
-embedding_service = EmbeddingService()
-faiss_store = FAISSStore(embedding_service)
-bm25_store = BM25Store()
-
-vector_store = faiss_store.create(chunks)
-faiss_store.save(vector_store, repo)
-
-bm25_retriever = bm25_store.create(chunks)
-bm25_store.save(bm25_retriever, repo)
-```
+The following example illustrates how to compose the conversational RAG pipeline. This workflow is not yet exposed as a dedicated REST endpoint.
 
 **Compose hybrid retrieval and conversational RAG chain:**
 
 ```python
 from app.models.llm import ChatModelService
+from app.retrieval.Embedding_Service import EmbeddingService
+from app.retrieval.Faiss_store import FAISSStore
+from app.retrieval.bm25_store import BM25Store
 from app.retrieval.hybrid import HybridRetriever
 from app.chains.history_aware_retriever import HistoryAwareRetriever
 from app.chains.qa_chain import QuestionAnswerChain
 from app.chains.retrieval_chain import RetrievalChain
 from app.chains.conversational_chain import ConversationalChain
 from app.memory.redis_history import RedisHistoryService
+from app.services.repository_service import RepositoryService
 
+repo = RepositoryService().get_repository("langchain-ai", "langchain")
 llm = ChatModelService().model
+
+embedding_service = EmbeddingService()
+faiss_store = FAISSStore(embedding_service)
+bm25_store = BM25Store()
 
 faiss = faiss_store.load(repo)
 bm25 = bm25_store.load(repo)
@@ -378,7 +386,6 @@ conversational = ConversationalChain(
     RedisHistoryService(),
 ).create()
 
-# Invoke with a session ID for history persistence
 response = conversational.invoke(
     {"input": "How is hybrid retrieval configured?"},
     config={"configurable": {"session_id": "user-123"}},
@@ -408,7 +415,8 @@ RepoIntel/
 │   │   ├── dependencies.py             # FastAPI dependency providers
 │   │   └── routes/
 │   │       ├── health.py               # Health check endpoint
-│   │       └── repository.py           # Repository clone/update endpoint
+│   │       ├── repository.py           # Repository CRUD endpoints
+│   │       └── indexing.py             # Repository indexing endpoint
 │   ├── cache/
 │   │   └── redis_cache.py              # Redis-backed cache wrapper
 │   ├── chains/
@@ -443,10 +451,11 @@ RepoIntel/
 │   │   ├── hybrid.py                   # FAISS + BM25 ensemble retriever
 │   │   └── reranker.py                 # FlashRank contextual compression
 │   ├── schemas/
+│   │   ├── indexing.py                 # Pydantic models for indexing responses
 │   │   └── repository.py               # Pydantic request/response models
 │   └── services/
 │       ├── chat_service.py             # Thin chain invocation wrapper
-│       ├── indexing_service.py         # Indexing orchestration (stub)
+│       ├── indexing_service.py         # Indexing orchestration
 │       └── repository_service.py       # GitHub clone/update/delete operations
 ├── storage/                            # Runtime data (gitignored)
 │   ├── repositories/                   # Cloned Git repositories
@@ -520,6 +529,8 @@ Host: localhost:8000
 | `version` | `string` | Application version from settings |
 | `environment` | `string` | Value of `APP_ENV` |
 
+---
+
 #### `POST /repositories/repositories:`
 
 Clone a GitHub repository or pull the latest changes if it already exists locally.
@@ -562,23 +573,145 @@ Content-Type: application/json
 | `repository.url` | `string` | Original GitHub URL |
 | `repository.local_path` | `string` | Local filesystem path |
 
-**Error responses (domain exceptions, not yet mapped to HTTP status codes uniformly):**
+---
+
+#### `GET /repositories/{owner}/{name}`
+
+Retrieve metadata for a locally stored repository.
+
+**Request:**
+
+```http
+GET /api/v1/repositories/owner/repo HTTP/1.1
+Host: localhost:8000
+```
+
+**Response `200 OK`:**
+
+```json
+{
+  "Owner": "owner",
+  "repo_name": "repo",
+  "url": "https://github.com/owner/repo.git",
+  "local_path": "storage/repositories/owner/repo"
+}
+```
+
+---
+
+#### `PATCH /repositories/{owner}/{name}`
+
+Pull the latest changes from the remote repository.
+
+**Request:**
+
+```http
+PATCH /api/v1/repositories/owner/repo HTTP/1.1
+Host: localhost:8000
+```
+
+**Response `200 OK`:**
+
+```json
+{
+  "message": "Repository updated successfully.",
+  "repository": {
+    "Owner": "owner",
+    "repo_name": "repo",
+    "url": "https://github.com/owner/repo.git",
+    "local_path": "storage/repositories/owner/repo"
+  }
+}
+```
+
+---
+
+#### `DELETE /repositories/{owner}/{name}`
+
+Remove a repository from local storage.
+
+**Request:**
+
+```http
+DELETE /api/v1/repositories/owner/repo HTTP/1.1
+Host: localhost:8000
+```
+
+**Response `200 OK`:**
+
+```json
+{
+  "message": "Repository deleted successfully.",
+  "repository": {
+    "Owner": "owner",
+    "repo_name": "repo",
+    "url": "https://github.com/owner/repo.git",
+    "local_path": "storage/repositories/owner/repo"
+  }
+}
+```
+
+---
+
+#### `POST /indexing/{owner}/{name}/index`
+
+Index a locally stored repository by loading, enriching, chunking, and persisting a FAISS vector store.
+
+**Request:**
+
+```http
+POST /api/v1/indexing/owner/repo/index HTTP/1.1
+Host: localhost:8000
+```
+
+| Path parameter | Type | Description |
+|----------------|------|-------------|
+| `owner` | `string` | GitHub organization or user |
+| `name` | `string` | Repository name |
+
+**Response `200 OK`:**
+
+```json
+{
+  "message": "Repository indexed successfully.",
+  "repository": "repo",
+  "indexed_documents": 1234,
+  "chunks": 1234,
+  "status": "success"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `message` | `string` | Operation status message |
+| `repository` | `string` | Repository name |
+| `indexed_documents` | `integer` | Number of document chunks indexed |
+| `chunks` | `integer` | Number of chunks created |
+| `status` | `string` | Indexing outcome (`success`) |
+
+---
+
+### Error handling
+
+Domain exceptions from `app/core/exception.py` are raised by service-layer code but are not yet uniformly mapped to HTTP status codes by FastAPI exception handlers. Unhandled exceptions may surface as `500 Internal Server Error` responses.
 
 | Condition | Exception |
 |-----------|-----------|
 | Non-GitHub or malformed URL | `InvalidRepositoryURLError` |
 | Clone failure | `RepositoryCloneError` |
 | Repository already exists on clone | `RepositoryAlreadyExistsError` |
+| Repository not found locally | `RepositoryNotFoundError` |
+| Pull/update failure | `RepositoryUpdateError` |
 
 ### Planned endpoints
 
-The service and chain layers support indexing and conversational Q&A workflows, but corresponding REST routes (for example, `POST /index`, `POST /chat`, `GET /repositories/{owner}/{repo}/status`) are not yet registered in `app/main.py`. Consult the OpenAPI schema at `/docs` for the current route list.
+Conversational Q&A is supported at the chain layer via `ConversationalChain` and `ChatService`, but a dedicated REST route (for example, `POST /chat`) is not yet registered in `app/main.py`. Consult the OpenAPI schema at `/docs` for the current route list.
 
 ---
 
 ## Testing
 
-The repository does not currently include automated tests. The `.gitignore` is configured for common Python test artifacts (`.pytest_cache/`, `.coverage`, `htmlcov/`), indicating pytest as the intended framework.
+The repository does not currently include automated tests. The `.gitignore` is configured for common Python test artifacts (`.pytest_cache/`, `.coverage`, `htmlcov/`), indicating pytest as the intended framework. No CI pipeline or coverage reporting is configured.
 
 ### Recommended setup
 
@@ -597,10 +730,12 @@ tests/
 │   └── test_ast_enricher.py
 ├── integration/
 │   ├── test_faiss_store.py
-│   └── test_bm25_store.py
+│   ├── test_bm25_store.py
+│   └── test_indexing_service.py
 └── e2e/
     ├── test_health_endpoint.py
-    └── test_repository_endpoint.py
+    ├── test_repository_endpoint.py
+    └── test_indexing_endpoint.py
 ```
 
 ### Running tests (once added)
