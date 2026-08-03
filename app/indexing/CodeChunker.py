@@ -18,7 +18,7 @@ class CodeChunker:
 
     def _chunk_python_document(self, document: Document) -> list[Document]:
         """Chunk a python doc into smaller pieces"""
-        textsplitter = RecursiveCharacterTextSplitter(
+        textsplitter = RecursiveCharacterTextSplitter.from_language(
             language=Language.PYTHON,
             chunk_size=1000,
             chunk_overlap=200,
@@ -27,7 +27,7 @@ class CodeChunker:
 
     def _chunk_markdown_document(self, document: Document) -> list[Document]:
         """Chunk a markdown doc into smaller pieces"""
-        textsplitter = RecursiveCharacterTextSplitter(
+        textsplitter = RecursiveCharacterTextSplitter.from_language(
             language=Language.MARKDOWN,
             chunk_size=1000,
             chunk_overlap=200,

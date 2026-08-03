@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from app.api.routes import health, repository, indexing
+from app.api.routes import chat, health, repository, indexing, chat
 from app.core.config import settings 
 
 def create_app() -> FastAPI:
@@ -14,6 +14,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router, prefix="/api/v1", tags=["Health"])
     app.include_router(repository.router, prefix="/api/v1", tags=["Repositories"])
     app.include_router(indexing.router, prefix="/api/v1", tags=["indexing"])
+    app.include_router(chat.router, prefix="/api/v1", tags=["chat"])
     return app
 
 app = create_app()

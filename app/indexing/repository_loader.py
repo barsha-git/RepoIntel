@@ -24,6 +24,9 @@ class RepositoryLoader:
             path=str(repository.local_path),
             glob="**/*",
             loader_cls=TextLoader,
+            loader_kwargs={
+                "autodetect_encoding": True,
+            },
             recursive=True,
             silent_errors=False,
             exclude=DEFAULT_EXCLUDE,

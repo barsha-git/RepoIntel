@@ -6,25 +6,14 @@ from langchain_core.runnables import Runnable
 
 
 class RetrievalChain:
-    """
-    Compose the history-aware retriever and
-    question-answer chain into a single runnable.
-    """
 
-    def __init__(
+    def create(
         self,
         retriever: BaseRetriever,
         qa_chain: Runnable,
-    ) -> None:
-        self._retriever = retriever
-        self._qa_chain = qa_chain
-
-    def create(self) -> Runnable:
-        """
-        Create the retrieval chain.
-        """
+    ) -> Runnable:
 
         return create_retrieval_chain(
-            retriever=self._retriever,
-            combine_docs_chain=self._qa_chain,
+            retriever=retriever,
+            combine_docs_chain=qa_chain,
         )

@@ -4,6 +4,6 @@ class IndexingRequest(BaseModel):
     message:str
     repository: str
     indexed_documents: int
-    chunks: int
+    chunk: int
     status: str
     

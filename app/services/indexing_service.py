@@ -55,7 +55,7 @@ class IndexingService:
          "indexed_documents": len(chunks),
          "chunk": len(chunks),
          "status": "success"
-        },
+        }
     
     
 

@@ -36,8 +36,10 @@ class Settings(BaseSettings):
     LLM_MAX_TOKENS: int
     LLM_PROVIDERS:str
     GROQ_API_KEY: str
+    RANKER_MODEL: str
+    GROQ_API_KEY: str
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
-
+    
 
 
 
