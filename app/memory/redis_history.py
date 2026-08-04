@@ -22,21 +22,21 @@ class RedisHistoryService:
         self.key_prefix = settings.HISTORY_KEY_PREFIX
 
     def get_history(
-        self,
-        session_id: str,
+    self,
+    session_id: str,
     ) -> RedisChatMessageHistory:
-        """
-        Return the chat history for a session.
+     """
+    Return the chat history for a session.
 
-        If the session does not exist,
-        RedisChatMessageHistory creates it automatically.
-        """
+    If the session does not exist,
+    RedisChatMessageHistory creates it automatically.
+    """
 
-        return RedisChatMessageHistory(
-            session_id=f"{self.key_prefix}{session_id}",
-            redis_url=self.redis_url,
-            ttl=self.ttl,
-        )
+     return RedisChatMessageHistory(
+          session_id=f"{self.key_prefix}{session_id}",
+          redis_url=self.redis_url,
+          ttl=self.ttl,
+    )
 
     def clear_history(
         self,

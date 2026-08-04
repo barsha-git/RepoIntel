@@ -46,14 +46,18 @@ class IndexingService:
        logger.success(f"FAISS vector store saved to disk successfully: {repository.repo_name}")
 
        logger.info(f"Creating BM25 store from chunks: {repository.repo_name}")
-       self.bm25_store.create(chunks)
+       bm25_store= self.bm25_store.create(chunks)
        logger.success(f"BM25 store created successfully: {repository.repo_name}")
+
+       logger.info(f"Saving BM25 store to disk: {repository.repo_name}")
+       self.bm25_store.save(bm25_store, repository)
+       logger.success(f"BM25 store saved to disk successfully: {repository.repo_name}")
 
        return {
          "message": "Repository indexed successfully.",
          "repository": repository.repo_name,
          "indexed_documents": len(chunks),
-         "chunk": len(chunks),
+         "chunks": len(chunks),
          "status": "success"
         }
     
