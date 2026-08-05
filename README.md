@@ -7,7 +7,7 @@
 
 **RepoIntel** is a repository intelligence backend that ingests GitHub repositories, indexes their source code and documentation, and exposes retrieval-augmented generation (RAG) capabilities for code-aware question answering. The service is built as a modular FastAPI application with a layered architecture that separates HTTP routing, orchestration services, indexing pipelines, hybrid retrieval, and LangChain-based conversational chains.
 
-The HTTP API currently exposes health checks, full repository lifecycle management (create, read, update, delete), and a repository indexing endpoint. Indexing, hybrid retrieval (FAISS + BM25), LLM integration (Groq), and Redis-backed chat history are implemented at the service and chain layers; conversational Q&A is composable programmatically but not yet exposed as a REST endpoint.
+The HTTP API exposes health checks, full repository lifecycle management (create, read, update, delete), repository indexing, and conversational Q&A against indexed repositories. Under the hood, the system combines dense vector search (FAISS), sparse keyword search (BM25), FlashRank reranking, Groq-hosted LLMs, and Redis-backed session history into a multi-stage RAG pipeline.
 
 Repository: [https://github.com/barsha-git/RepoIntel](https://github.com/barsha-git/RepoIntel)
 
@@ -23,7 +23,9 @@ Repository: [https://github.com/barsha-git/RepoIntel](https://github.com/barsha-
   - `PATCH /api/v1/repositories/{owner}/{name}` — Pull the latest changes from the remote.
   - `DELETE /api/v1/repositories/{owner}/{name}` — Remove a repository from local storage.
 
-- **REST repository indexing** — `POST /api/v1/indexing/{owner}/{name}/index` orchestrates the full indexing pipeline: load documents, enrich with AST metadata, chunk, build a FAISS vector store, and persist it to disk.
+- **REST repository indexing** — `POST /api/v1/indexing/{owner}/{name}/index` orchestrates the full indexing pipeline: load documents, enrich with AST metadata, chunk, build FAISS and BM25 indexes, and persist both to disk.
+
+- **REST conversational Q&A** — `POST /api/v1/chat/{owner}/{repo_name}` executes a session-aware RAG query against an indexed repository, combining hybrid retrieval, FlashRank reranking, history-aware query rewriting, and Groq LLM generation.
 
 - **Document ingestion** — Load repository files with LangChain `DirectoryLoader` and `TextLoader`, excluding build artifacts, virtual environments, and VCS metadata (`.git`, `node_modules`, `__pycache__`, `dist`, `build`, and related paths).
 
@@ -37,7 +39,7 @@ Repository: [https://github.com/barsha-git/RepoIntel](https://github.com/barsha-
 
 - **Semantic embeddings** — Generate L2-normalized embeddings with HuggingFace `BAAI/bge-small-en-v1.5` through `langchain-huggingface` (`EmbeddingService`).
 
-- **Result reranking** — Optional FlashRank-based contextual compression reranking via `FlashRankReranker` to refine top-k retrieval results.
+- **Result reranking** — FlashRank-based contextual compression reranking via `FlashRankReranker` (default `top_n=3`) to refine hybrid retrieval results before QA.
 
 - **Multi-stage RAG chains** — Composable LangChain runnables:
   - `HistoryAwareRetriever` — Rewrites follow-up questions into standalone queries before retrieval.
@@ -45,11 +47,13 @@ Repository: [https://github.com/barsha-git/RepoIntel](https://github.com/barsha-
   - `RetrievalChain` — Combines retriever and QA chain.
   - `ConversationalChain` — Wraps retrieval with Redis-backed session history via `RunnableWithMessageHistory`.
 
+- **Per-repository pipeline caching** — `ChatService` caches the assembled retrieval pipeline per `{owner}/{repo_name}` to avoid rebuilding FAISS/BM25/hybrid/reranker chains on every request.
+
 - **LLM integration** — Groq chat models via `langchain-groq` (`ChatModelService`), configured through environment variables.
 
-- **Redis integration** — Docker Compose provisioning for Redis 7; `RedisHistoryService` (LangChain `RedisChatMessageHistory`) for conversation persistence and a lightweight `RedisCache` wrapper.
+- **Redis integration** — Docker Compose provisioning for Redis Stack; `RedisHistoryService` (LangChain `RedisChatMessageHistory`) for conversation persistence and a lightweight `RedisCache` wrapper.
 
-- **Structured configuration** — Environment-driven settings via `pydantic-settings`, covering application metadata, API host/port, Redis, storage paths, embedding settings, LLM provider configuration, and logging level.
+- **Structured configuration** — Environment-driven settings via `pydantic-settings`, covering application metadata, API host/port, Redis, storage paths, embedding settings, LLM provider configuration, reranker model, and logging level.
 
 - **Observability** — Colored console logging through Loguru with configurable log levels.
 
@@ -68,7 +72,7 @@ Repository: [https://github.com/barsha-git/RepoIntel](https://github.com/barsha-
 | Environment variables | python-dotenv | 1.2.2 |
 | Git operations | GitPython | 3.1.54 |
 | Redis client | redis (Python) | 8.0.1 |
-| Redis server | Redis Alpine | 7 |
+| Redis server | Redis Stack (`redis/redis-stack`) | latest |
 | Logging | Loguru | 0.7.3 |
 | LLM orchestration | LangChain Core | — |
 | LangChain integrations | langchain-classic, langchain-community | — |
@@ -78,7 +82,7 @@ Repository: [https://github.com/barsha-git/RepoIntel](https://github.com/barsha-
 | Chat history | langchain-redis | — |
 | Vector search | FAISS (via langchain-community) | — |
 | Keyword search | BM25 (via langchain-community) | — |
-| Reranking | FlashRank (via langchain-community) | — |
+| Reranking | FlashRank (via langchain-community + `flashrank`) | — |
 | Embedding model | `BAAI/bge-small-en-v1.5` | — |
 | Containerization | Docker, Docker Compose | — |
 
@@ -93,7 +97,7 @@ Repository: [https://github.com/barsha-git/RepoIntel](https://github.com/barsha-
 - **Python 3.11+**
 - **Git** (for cloning GitHub repositories)
 - **Docker** and **Docker Compose** (recommended, for Redis)
-- **Groq API key** (required for LLM-backed chains; obtain at [console.groq.com](https://console.groq.com/))
+- **Groq API key** (required for LLM-backed chat; obtain at [console.groq.com](https://console.groq.com/))
 - Sufficient disk space under `STORAGE_PATH` for cloned repositories and on-disk indexes
 
 ### 1. Clone the repository
@@ -123,7 +127,7 @@ Install pinned core dependencies:
 pip install -r requirements.txt
 ```
 
-For indexing, embedding, hybrid retrieval, and conversational chains, install the additional packages referenced by the codebase:
+For indexing, embedding, hybrid retrieval, reranking, and conversational chains, install the additional packages referenced by the codebase:
 
 ```bash
 pip install \
@@ -186,6 +190,9 @@ LLM_MODEL=llama-3.3-70b-versatile
 LLM_TEMPERATURE=0.1
 LLM_MAX_TOKENS=4096
 GROQ_API_KEY=your_groq_api_key_here
+
+# Reranker
+RANKER_MODEL=ms-marco-MiniLM-L-12-v2
 ```
 
 | Variable | Description | Example |
@@ -210,6 +217,7 @@ GROQ_API_KEY=your_groq_api_key_here
 | `LLM_TEMPERATURE` | Sampling temperature | `0.1` |
 | `LLM_MAX_TOKENS` | Maximum tokens in LLM responses | `4096` |
 | `GROQ_API_KEY` | Groq API authentication key | — |
+| `RANKER_MODEL` | FlashRank model name for reranking | `ms-marco-MiniLM-L-12-v2` |
 
 > **Note:** `EmbeddingService` currently hardcodes `BAAI/bge-small-en-v1.5` on CPU. The `EMBEDDING_MODEL_*` settings are defined for future use. The bundled `.env.example` contains only a subset of these variables and uses a legacy `APP_NAME` value (`CodeCompass`); extend it using the template above.
 
@@ -221,7 +229,7 @@ Redis is required for conversational history and optional caching:
 docker compose up -d redis
 ```
 
-This launches `redis:7-alpine` on port `6379` with a persistent volume (`redis_data`).
+This launches `redis/redis-stack:latest` as container `RepoIntel-redis`, exposing port `6379` (Redis) and `8001` (RedisInsight UI) with a persistent volume (`redis_data`).
 
 ### 6. Create storage directories
 
@@ -257,9 +265,11 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 The server reads `HOST` and `PORT` from the environment when launched through process managers; the commands above use explicit flags for clarity.
 
-### Verify the service
+### End-to-end workflow
 
-**Health check:**
+A typical session follows three steps: register a repository, index it, then ask questions via the chat endpoint.
+
+**1. Health check:**
 
 ```bash
 curl http://localhost:8000/api/v1/health/
@@ -275,7 +285,7 @@ curl http://localhost:8000/api/v1/health/
 }
 ```
 
-**Register a GitHub repository:**
+**2. Register a GitHub repository:**
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/repositories/repositories: \
@@ -297,7 +307,7 @@ curl -X POST http://localhost:8000/api/v1/repositories/repositories: \
 }
 ```
 
-**Index a repository:**
+**3. Index the repository:**
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/indexing/langchain-ai/langchain/index
@@ -314,6 +324,30 @@ curl -X POST http://localhost:8000/api/v1/indexing/langchain-ai/langchain/index
   "status": "success"
 }
 ```
+
+**4. Ask a question:**
+
+```bash
+curl -X POST http://localhost:8000/api/v1/chat/langchain-ai/langchain \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id": "user-123",
+    "message": "How is hybrid retrieval configured in this project?"
+  }'
+```
+
+**Expected response:**
+
+```json
+{
+  "answer": "Hybrid retrieval combines FAISS and BM25 retrievers via EnsembleRetriever with weights of 0.6 and 0.4 respectively...",
+  "source_references": null
+}
+```
+
+> **Note:** The repository must be cloned and indexed before chat requests succeed. FAISS and BM25 index files must exist under `storage/indexes/`.
+
+### Additional repository operations
 
 **Retrieve repository metadata:**
 
@@ -345,9 +379,7 @@ FastAPI generates OpenAPI documentation automatically:
 
 ### Programmatic usage (chain layer)
 
-The following example illustrates how to compose the conversational RAG pipeline. This workflow is not yet exposed as a dedicated REST endpoint.
-
-**Compose hybrid retrieval and conversational RAG chain:**
+The following example illustrates how to compose the conversational RAG pipeline directly, without going through the HTTP API:
 
 ```python
 from app.models.llm import ChatModelService
@@ -355,6 +387,8 @@ from app.retrieval.Embedding_Service import EmbeddingService
 from app.retrieval.Faiss_store import FAISSStore
 from app.retrieval.bm25_store import BM25Store
 from app.retrieval.hybrid import HybridRetriever
+from app.retrieval.reranker import FlashRankReranker
+from flashrank import Ranker
 from app.chains.history_aware_retriever import HistoryAwareRetriever
 from app.chains.qa_chain import QuestionAnswerChain
 from app.chains.retrieval_chain import RetrievalChain
@@ -368,6 +402,7 @@ llm = ChatModelService().model
 embedding_service = EmbeddingService()
 faiss_store = FAISSStore(embedding_service)
 bm25_store = BM25Store()
+reranker = FlashRankReranker(client=Ranker())
 
 faiss = faiss_store.load(repo)
 bm25 = bm25_store.load(repo)
@@ -377,14 +412,15 @@ hybrid = HybridRetriever().create(
     bm25_store.as_retriever(bm25),
 )
 
-history_aware = HistoryAwareRetriever(llm).create(hybrid)
+ranked = reranker.create(hybrid)
+history_aware = HistoryAwareRetriever(llm).create(ranked)
 qa_chain = QuestionAnswerChain(llm).create()
-retrieval_chain = RetrievalChain(history_aware, qa_chain).create()
+retrieval_chain = RetrievalChain().create(history_aware, qa_chain)
 
-conversational = ConversationalChain(
+conversational = ConversationalChain().create(
     retrieval_chain,
     RedisHistoryService(),
-).create()
+)
 
 response = conversational.invoke(
     {"input": "How is hybrid retrieval configured?"},
@@ -412,16 +448,17 @@ RepoIntel/
 │   ├── __init__.py
 │   ├── main.py                         # FastAPI application factory and entry point
 │   ├── api/
-│   │   ├── dependencies.py             # FastAPI dependency providers
+│   │   ├── dependencies.py             # FastAPI dependency providers (services, chains, stores)
 │   │   └── routes/
 │   │       ├── health.py               # Health check endpoint
 │   │       ├── repository.py           # Repository CRUD endpoints
-│   │       └── indexing.py             # Repository indexing endpoint
+│   │       ├── indexing.py             # Repository indexing endpoint
+│   │       └── chat.py                 # Conversational RAG endpoint
 │   ├── cache/
 │   │   └── redis_cache.py              # Redis-backed cache wrapper
 │   ├── chains/
 │   │   ├── conversational_chain.py     # RunnableWithMessageHistory wrapper
-│   │   ├── history_aware_retriever.py    # Follow-up question contextualization
+│   │   ├── history_aware_retriever.py  # Follow-up question contextualization
 │   │   ├── qa_chain.py                 # Stuff-documents QA chain builder
 │   │   └── retrieval_chain.py          # Retriever + QA chain composition
 │   ├── core/
@@ -451,11 +488,12 @@ RepoIntel/
 │   │   ├── hybrid.py                   # FAISS + BM25 ensemble retriever
 │   │   └── reranker.py                 # FlashRank contextual compression
 │   ├── schemas/
+│   │   ├── chat.py                     # Pydantic models for chat requests/responses
 │   │   ├── indexing.py                 # Pydantic models for indexing responses
 │   │   └── repository.py               # Pydantic request/response models
 │   └── services/
-│       ├── chat_service.py             # Thin chain invocation wrapper
-│       ├── indexing_service.py         # Indexing orchestration
+│       ├── chat_service.py             # Conversational RAG orchestration with pipeline caching
+│       ├── indexing_service.py         # Indexing orchestration (FAISS + BM25)
 │       └── repository_service.py       # GitHub clone/update/delete operations
 ├── storage/                            # Runtime data (gitignored)
 │   ├── repositories/                   # Cloned Git repositories
@@ -465,7 +503,7 @@ RepoIntel/
 │   └── cache/                          # Application cache data
 ├── .env.example                        # Partial environment variable template
 ├── .gitignore
-├── docker-compose.yml                  # Redis service definition
+├── docker-compose.yml                  # Redis Stack service definition
 ├── Dockerfile                          # Container image definition
 ├── requirements.txt                    # Pinned core Python dependencies
 └── README.md
@@ -655,7 +693,7 @@ Host: localhost:8000
 
 #### `POST /indexing/{owner}/{name}/index`
 
-Index a locally stored repository by loading, enriching, chunking, and persisting a FAISS vector store.
+Index a locally stored repository by loading, enriching, chunking, and persisting FAISS and BM25 indexes.
 
 **Request:**
 
@@ -691,6 +729,51 @@ Host: localhost:8000
 
 ---
 
+#### `POST /chat/{owner}/{repo_name}`
+
+Execute a conversational RAG query against an indexed repository. The pipeline loads FAISS and BM25 indexes, applies hybrid retrieval, FlashRank reranking, history-aware query rewriting, and Groq LLM generation. Session history is persisted in Redis keyed by `session_id`.
+
+**Request:**
+
+```http
+POST /api/v1/chat/owner/repo HTTP/1.1
+Host: localhost:8000
+Content-Type: application/json
+
+{
+  "session_id": "user-123",
+  "message": "How does the indexing pipeline work?"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `session_id` | `string` | Yes | Unique session identifier for conversation history |
+| `message` | `string` | Yes | User question about the repository |
+
+| Path parameter | Type | Description |
+|----------------|------|-------------|
+| `owner` | `string` | GitHub organization or user |
+| `repo_name` | `string` | Repository name |
+
+**Response `200 OK`:**
+
+```json
+{
+  "answer": "The indexing pipeline loads repository files, enriches Python files with AST metadata, chunks documents, and persists FAISS and BM25 indexes to disk...",
+  "source_references": null
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `answer` | `string` | LLM-generated answer grounded in retrieved repository context |
+| `source_references` | `array \| null` | Optional list of source file references (schema defined; population depends on chain output mapping) |
+
+**Prerequisites:** The repository must exist locally and have been indexed. Both FAISS (`storage/indexes/faiss/{owner}/{repo_name}/`) and BM25 (`storage/indexes/bm25/{owner}/{repo_name}/`) indexes must be present.
+
+---
+
 ### Error handling
 
 Domain exceptions from `app/core/exception.py` are raised by service-layer code but are not yet uniformly mapped to HTTP status codes by FastAPI exception handlers. Unhandled exceptions may surface as `500 Internal Server Error` responses.
@@ -703,9 +786,7 @@ Domain exceptions from `app/core/exception.py` are raised by service-layer code 
 | Repository not found locally | `RepositoryNotFoundError` |
 | Pull/update failure | `RepositoryUpdateError` |
 
-### Planned endpoints
-
-Conversational Q&A is supported at the chain layer via `ConversationalChain` and `ChatService`, but a dedicated REST route (for example, `POST /chat`) is not yet registered in `app/main.py`. Consult the OpenAPI schema at `/docs` for the current route list.
+Consult the live OpenAPI schema at `/docs` for the authoritative route list and request/response models.
 
 ---
 
@@ -735,7 +816,8 @@ tests/
 └── e2e/
     ├── test_health_endpoint.py
     ├── test_repository_endpoint.py
-    └── test_indexing_endpoint.py
+    ├── test_indexing_endpoint.py
+    └── test_chat_endpoint.py
 ```
 
 ### Running tests (once added)
@@ -764,7 +846,7 @@ curl -s http://localhost:8000/api/v1/health/ | python -m json.tool
 
 Contributions are welcome. Please follow these guidelines:
 
-1. **Fork and branch** — Create a feature branch from `main` (for example, `feat/chat-api`).
+1. **Fork and branch** — Create a feature branch from `main` (for example, `feat/improve-chat-responses`).
 
 2. **Match existing conventions**
    - Use type hints and docstrings on public methods.
